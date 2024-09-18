@@ -10,6 +10,12 @@ export interface UrbitParams {
    */
   url: string;
   /**
+   * The "mode" to operate the channel in, determining whether to receive
+   * javascript objects or proper Nouns in responses from the channel.
+   * Defaults to 'noun'.
+   */
+  mode?: 'noun' | 'json';
+  /**
    * The access code for the ship at that address
    */
   code?: string;
@@ -41,7 +47,7 @@ export interface UrbitParams {
 }
 
 /**
- * A path in either string, string-array or Noun format
+ * A path in either string, string-array (with trailing nil), or Noun format
  * @example
  * `'/updates'`
  * `['updates', 0]`
@@ -82,14 +88,9 @@ export type GallAgent = string;
 /**
  * Description of an outgoing poke
  */
-export interface Poke {
+interface PokeBase {
   /**
-   * Ship to poke. If left empty, the api lib will populate it with the ship that it is connected to.
-   *
-   * @remarks
-   *
-   * This should always be the ship that you are connected to
-   *
+   * Ship to poke (defaults to the host ship)
    */
   ship?: Patp;
   /**
@@ -100,15 +101,25 @@ export interface Poke {
    */
   mark: Mark;
   /**
-   * Noun to poke with
-   */
-  noun: Noun;
-  /**
    * result handlers
    */
   onSuccess?: () => void;
+}
+interface PokeNoun extends PokeBase {
+  /**
+   * Data to poke with: noun sent as-is or value sent as json
+   */
+  data: Noun;
   onError?: (e: Noun) => void; //  given a $tang
 }
+interface PokeJson extends PokeBase {
+  /**
+   * Data to poke with: noun sent as-is or value sent as json
+   */
+  data: any;
+  onError?: (e: string) => void;
+}
+export type Poke = PokeNoun | PokeJson;
 
 /**
  * Description of a scry request
@@ -166,19 +177,27 @@ export interface JsonThread extends Thread {
  * Subscription event handlers
  *
  */
-export interface Subscription {
+interface SubscriptionBase {
   /**
-   * The app to subscribe to
+   * The ship to subscribe to (defaults to the host ship)
+   */
+  ship?: Patp;
+  /**
+   * The agent to subscribe to
    * @example
    * `"graph-store"`
    */
   app: GallAgent;
   /**
    * The path to which to subscribe
-   * @example
-   * `['keys']`
    */
   path: Path;
+  /**
+   * Handle %kick
+   */
+  onKick?(): void;
+}
+export interface SubscriptionNoun extends SubscriptionBase {
   /**
    * Handle negative %watch-ack
    */
@@ -187,12 +206,19 @@ export interface Subscription {
   /**
    * Handle %fact
    */
-  onFact?(mark: Mark, data: Noun): void;
-  /**
-   * Handle %kick
-   */
-  onKick?(): void;
+  onFact?: (mark: Mark, data: Noun) => void;
 }
+export interface SubscriptionJson extends SubscriptionBase {
+  /**
+   * Handle negative %watch-ack
+   */
+  onNack?(error: string): void;
+  /**
+   * Handle %fact
+   */
+  onFact?: (mark: Mark, data: any) => void;
+}
+export type Subscription = SubscriptionJson | SubscriptionNoun;
 
 export type OnceSubscriptionErr = 'onKick' | 'onNack' | 'timeout';
 
@@ -204,3 +230,29 @@ export interface headers {
 export class FatalError extends Error {}
 
 export class ReapError extends Error {}
+
+export type EyreEvent = EyreEventPokeAck
+                      | EyreEventWatchAck
+                      | EyreEventKick
+                      | EyreEventFact;
+
+type EyreEventPokeAck = {
+  tag: 'poke-ack';
+  id: number;
+  err?: Noun | string;
+};
+type EyreEventWatchAck = {
+  tag: 'watch-ack';
+  id: number;
+  err?: Noun | string;
+}
+type EyreEventKick = {
+  tag: 'kick';
+  id: number;
+}
+type EyreEventFact = {
+  tag: 'fact';
+  id: number;
+  mark: Mark;
+  data: Noun | any;
+}

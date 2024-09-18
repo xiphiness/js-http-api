@@ -18,11 +18,17 @@ import {
   Patp,
   GallAgent,
   Mark,
+  EyreEvent,
 } from './types';
 import EventEmitter, { hexString, unpackJamBytes, packJamBytes } from './utils';
 
 import { Noun, Atom, Cell, enjs, dejs, jam, cue } from '@urbit/nockjs';
 import { parseUw, formatUw, patp2dec } from '@urbit/aura';
+
+//TODO  move into nockjs utils
+function isNoun(a: any): a is Noun {
+  return (a instanceof Atom) || (a instanceof Cell);
+}
 
 /**
  * A class for interacting with an urbit ship, given its URL and code
@@ -89,6 +95,11 @@ export class Urbit {
    * The URL of the ship we're connected to
    */
   url: string;
+
+  /**
+   * The "mode" the channel is being operated in
+   */
+  mode: 'noun' | 'json';
 
   /**
    * Identity of the ship we're connected to
@@ -178,6 +189,7 @@ export class Urbit {
    */
   constructor(params: UrbitParams) {
     this.url = params.url;
+    this.mode = params.mode || 'noun';
     this.code = params.code;
     this.verbose = params.verbose || false;
     this.fetch = params.fetch || ((...args) => fetch(...args));
@@ -376,85 +388,66 @@ export class Urbit {
             this.ack(eventId);
           }
 
-          let data: Noun;
-          if (event.data) {
-            data = cue(new Atom(parseUw(event.data)));
-          }
+          const eev: EyreEvent = this.unpackSSEvent(event.data);
 
-          // [request-id channel-event]
           if (
-            data instanceof Cell &&
-            data.head instanceof Atom &&
-            data.tail instanceof Cell &&
-            data.tail.head instanceof Atom
+            eev.tag === 'poke-ack' &&
+            this.outstandingPokes.has(eev.id)
           ) {
-            //NOTE  id could be string if id > 2^32, not expected in practice
-            const id = Number(data.head.number);
-            const tag = Atom.cordToString(data.tail.head);
-            const bod = data.tail.tail;
-            // [%poke-ack p=(unit tang)]
-            if (tag === 'poke-ack' && this.outstandingPokes.has(id)) {
-              const funcs = this.outstandingPokes.get(id);
-              if (bod instanceof Atom) {
-                funcs.onSuccess();
-              } else {
-                //TODO  pre-render tang after porting tang utils
-                console.error(bod.tail);
-                funcs.onError(bod.tail);
-              }
-              this.outstandingPokes.delete(id);
-              // [%watch-ack p=(unit tang)]
-            } else if (
-              tag === 'watch-ack' &&
-              this.outstandingSubscriptions.has(id)
-            ) {
-              const funcs = this.outstandingSubscriptions.get(id);
-              if (bod instanceof Cell) {
-                //TODO  pre-render tang after porting tang utils
-                console.error(bod.tail);
-                funcs.onNack(bod.tail);
-                this.outstandingSubscriptions.delete(id);
-              }
-              // [%fact =desk =mark =noun]
-            } else if (
-              tag === 'fact' &&
-              this.outstandingSubscriptions.has(id)
-            ) {
-              const funcs = this.outstandingSubscriptions.get(id);
-              try {
-                if (
-                  !(
-                    bod instanceof Cell &&
-                    bod.tail instanceof Cell &&
-                    bod.tail.head instanceof Atom
-                  )
-                ) {
-                  throw 'malformed %fact';
-                }
-                const mark = Atom.cordToString(bod.tail.head);
-                //NOTE  we don't pass the desk. it's a leak-y eyre impl detail
-                funcs.onFact(mark, bod.tail.tail);
-              } catch (e) {
-                console.error('Failed to call subscription event callback', e);
-              }
-              // [%kick ~]
-            } else if (
-              tag === 'kick' &&
-              this.outstandingSubscriptions.has(id)
-            ) {
-              const funcs = this.outstandingSubscriptions.get(id);
-              funcs.onKick();
-              this.outstandingSubscriptions.delete(id);
-              this.emit('subscription', {
-                id: id,
-                status: 'close',
-              });
-            } else if (this.verbose) {
-              console.log([...this.outstandingSubscriptions.keys()]);
-              console.log('Unrecognized response', data, data.toString());
+            const funcs = this.outstandingPokes.get(eev.id);
+            if (!eev.err) {
+              funcs.onSuccess();
+            } else {
+              //TODO  pre-render tang after porting tang utils,
+              //      because json also has its tang pre-rendered into string
+              console.error(eev.err);
+              // @ts-ignore because function type signature shenanigans
+              funcs.onError?.(eev.err);
             }
-          } else {
-            console.log('strange event noun', data.toString());
+            this.outstandingPokes.delete(eev.id);
+          //
+          } else if (
+            eev.tag === 'watch-ack' &&
+            this.outstandingSubscriptions.has(eev.id)
+          ) {
+            const funcs = this.outstandingSubscriptions.get(eev.id);
+            if (eev.err) {
+              //TODO  pre-render tang after porting tang utils,
+              //      because json also has its tang pre-rendered into string
+              console.error(eev.err);
+              // @ts-ignore because function type signature shenanigans
+              funcs.onNack?.(eev.err);
+              this.outstandingSubscriptions.delete(eev.id);
+            }
+          //
+          } else if (
+            eev.tag === 'fact' &&
+            this.outstandingSubscriptions.has(eev.id)
+          ) {
+            const funcs: Subscription = this.outstandingSubscriptions.get(eev.id);
+            try {
+              if (funcs.onFact) {
+                //NOTE  we don't pass the desk. it's a leak-y eyre impl detail
+                funcs.onFact?.(eev.mark, eev.data);
+              }
+            } catch (e) {
+              console.error('Failed to call subscription event callback', e);
+            }
+          //
+          } else if (
+            eev.tag === 'kick' &&
+            this.outstandingSubscriptions.has(eev.id)
+          ) {
+            const funcs = this.outstandingSubscriptions.get(eev.id);
+            funcs.onKick();
+            this.outstandingSubscriptions.delete(eev.id);
+            this.emit('subscription', {
+              id: eev.id,
+              status: 'close',
+            });
+          } else if (this.verbose) {
+            console.log([...this.outstandingSubscriptions.keys()]);
+            console.log('Unrecognized unpacked event', eev);
           }
         },
         onerror: (error) => {
@@ -550,12 +543,97 @@ export class Urbit {
   //      should result in a noun nesting inside of the xx $eyre-command type
   private async sendNounsToChannel(...args: (Noun | any)[]): Promise<void> {
     const response = await this.fetch(this.channelUrl, {
-      ...this.fetchOptions('PUT'),
+      ...this.fetchOptions('PUT', 'noun'),
       method: 'PUT',
       body: formatUw(jam(dejs.list(args)).number.toString()),
     });
     if (!response.ok) {
-      throw new Error('Failed to PUT channel');
+      throw new Error('Failed to PUT channel command(s)');
+    }
+  }
+
+  //NOTE  every arg should be an eyre command object
+  //TODO  make a type for that
+  private async sendJsonsToChannel(...args: any[]): Promise<void> {
+    const response = await this.fetch(this.channelUrl, {
+      ...this.fetchOptions('PUT', 'json'),
+      method: 'PUT',
+      body: JSON.stringify(args),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to PUT channel command(s)');
+    }
+  }
+
+  private unpackSSEvent(eventString: string): EyreEvent {
+    if (this.mode === 'noun') {
+      const data: Noun = cue(new Atom(parseUw(eventString)));
+      // [request-id channel-event]
+      if (
+        data instanceof Cell &&
+        data.head instanceof Atom &&
+        data.tail instanceof Cell &&
+        data.tail.head instanceof Atom
+      ) {
+        //NOTE  id could be string if id > 2^32, not expected in practice
+        const id = Number(data.head.number);
+        const tag = Atom.cordToString(data.tail.head);
+        const bod = data.tail.tail;
+        // [%poke-ack p=(unit tang)]
+        if (tag === 'poke-ack') {
+          if (bod instanceof Atom) {
+            return { tag: 'poke-ack', id: id };
+          } else {
+            return { tag: 'poke-ack', id: id, err: bod.tail };
+          }
+        // [%watch-ack p=(unit tang)]
+        } else if (tag === 'watch-ack') {
+          if (bod instanceof Atom) {
+            return { tag: 'watch-ack', id: id };
+          } else {
+            return { tag: 'watch-ack', id: id, err: bod.tail };
+          }
+        // [%fact =desk =mark =noun]
+        } else if (tag === 'fact') {
+          if (
+            !(
+              bod instanceof Cell &&
+              bod.tail instanceof Cell &&
+              bod.tail.head instanceof Atom
+            )
+          ) {
+            throw new Error('malformed %fact: ' + bod.toString());
+          }
+          const mark = Atom.cordToString(bod.tail.head);
+          //NOTE  we don't extract the desk. it's a leak-y eyre impl detail
+          return { tag: 'fact', id: id, mark: mark, data: bod.tail.tail };
+        // [%kick ~]
+        } else if (tag === 'kick') {
+          return { tag: 'kick', id: id };
+        } else if (this.verbose) {
+          console.log('Unrecognized response', data, data.toString());
+        }
+      } else {
+        console.log('strange event noun', data.toString());
+      }
+    //
+    } else if (this.mode === 'json') {
+      const data: any = JSON.parse(eventString);
+      switch (data.response) {
+        case 'poke':
+          return { tag: 'poke-ack', id: data.id, err: data.err };
+        case 'subscribe':
+          return { tag: 'watch-ack', id: data.id, err: data.err };
+        case 'quit':
+          return { tag: 'kick', id: data.id };
+        case 'diff':
+          return { tag: 'fact', id: data.id, mark: data.mark, data: data.json };
+        default:
+          throw new Error('strange event json ' + eventString);
+      }
+    //
+    } else {
+      throw new Error('strange mode ' + this.mode);
     }
   }
 
@@ -615,8 +693,8 @@ export class Urbit {
     await this.ready;
     params.onSuccess = params.onSuccess || (()=>{});
     params.onError   = params.onError   || (()=>{});
-    const { app, mark, noun, shipName } = {
-      shipName: this.ship,
+    const { app, mark, data, ship } = {
+      ship: this.ship,
       ...params,
     };
 
@@ -625,17 +703,24 @@ export class Urbit {
     }
 
     const eventId = this.getEventId();
-    const ship = Atom.fromString(patp2dec(shipName), 10);
-    // [%poke request-id=@ud ship=@p app=term mark=@tas =noun]
-    const non = ['poke', eventId, ship, app, mark, noun];
     this.outstandingPokes.set(eventId, params);
-    await this.sendNounsToChannel(non);
+
+    if (isNoun(data)) {
+      const shipAtom = Atom.fromString(patp2dec(ship), 10);
+      // [%poke request-id=@ud ship=@p app=term mark=@tas =noun]
+      const non = ['poke', eventId, shipAtom, app, mark, data];
+      await this.sendNounsToChannel(non);
+    } else {
+      const poke = {
+        id: eventId, action: 'poke', ship, app, mark, data,
+      };
+      await this.sendJsonsToChannel(poke);
+    }
     return eventId;
   }
 
   /**
-   * Subscribes to a path on an app on a ship.
-   *
+   * Subscribes to a path on an app on a ship, handling noun results
    *
    * @param app The app to subsribe to
    * @param path The path to which to subscribe

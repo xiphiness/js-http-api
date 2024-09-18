@@ -1,4 +1,4 @@
-import Urbit, { Path } from '../src';
+import Urbit, { Path, Poke } from '../src';
 import { Noun, Atom, Cell, jam, dwim } from '@urbit/nockjs';
 import { formatUw } from '@urbit/aura';
 import 'jest';
@@ -163,10 +163,10 @@ describe('subscription', () => {
     airlock = newUrbit();
     airlock.onOpen = jest.fn();
     fetchSpy.mockImplementation(fakeFetch(() => fakeSSE([ack(1)])));
-    const params = {
+    const params: Poke = {
       app: 'app',
       mark: 'mark',
-      noun: dwim(1),
+      data: dwim(1),
       onSuccess: jest.fn(),
       onError: jest.fn(),
     };
@@ -186,10 +186,10 @@ describe('subscription', () => {
       .mockImplementationOnce(fakeFetch(() => fakeSSE([ack(1, true)])))
       .mockImplementationOnce(fakeFetch(() => fakeSSE([ack(1, true)])));
 
-    const params = {
+    const params: Poke = {
       app: 'app',
       mark: 'mark',
-      noun: dwim(1),
+      data: dwim(1),
       onSuccess: jest.fn(),
       onError: jest.fn(),
     };
