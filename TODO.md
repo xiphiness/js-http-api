@@ -1,3 +1,12 @@
 remaining work:
+- support json and noun modes side-by-side
+  - should add tests for json mode, mixing mode in subscriptions vs scry, etc
+- detect & handle 401 response for expired cookie
+- consider .onConnectionStatusChange callback (so lazy devs don't have to listen to the event emitter thing)
+- optional channel id param
+  - so we can re-use the same channel for a client
 - do pre-release
+  - move client to use new version of the library in json mode
+  - use noun scry/poke for new things
+  - upgrade existing scries to get nouns, port conversions to js
 - do webterm migration stream/recording
