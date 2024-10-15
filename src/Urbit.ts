@@ -514,7 +514,13 @@ export class Urbit {
     this.outstandingSubscriptions = new Map();
 
     this.outstandingPokes.forEach((poke, id) => {
-      poke.onError(Atom.fromString('Channel was reaped'));
+      if (this.mode === 'noun') {
+        // @ts-ignore because function type signature shenanigans
+        poke.onError(dwim(Atom.fromString('Channel was reaped'), 0));
+      } else {
+        // @ts-ignore because function type signature shenanigans
+        poke.onError('Channel was reaped');
+      }
     });
     this.outstandingPokes = new Map();
   }
@@ -741,6 +747,7 @@ export class Urbit {
     }
 
     const eventId = this.getEventId();
+    // @ts-ignore because function type signature shenanigans
     this.outstandingSubscriptions.set(eventId, {
       app,
       path,
