@@ -1,4 +1,4 @@
-import { Noun, Atom, jam, cue } from "@urbit/nockjs";
+import { Atom, Noun, cue, jam } from '@urbit/nockjs';
 
 export function camelize(str: string) {
   return str
@@ -13,10 +13,10 @@ export function camelize(str: string) {
 
 export function uncamelize(str: string, separator = '-') {
   // Replace all capital letters by separator followed by lowercase one
-  var str = str.replace(/[A-Z]/g, function (letter: string) {
+  const string = str.replace(/[A-Z]/g, function (letter: string) {
     return separator + letter.toLowerCase();
   });
-  return str.replace(new RegExp('^' + separator), '');
+  return string.replace(new RegExp('^' + separator), '');
 }
 
 export async function unpackJamBytes(buf: ArrayBufferLike): Promise<Noun> {
@@ -67,10 +67,10 @@ export function uid(): string {
 }
 
 export default class EventEmitter {
-  private listeners: Record<string, Function[]> = {};
+  private listeners: Record<string, ((...args: any[]) => void)[]> = {};
 
-  on(event: string, callback: Function) {
-    if (!this.listeners.hasOwnProperty(event)) {
+  on(event: string, callback: (...args: any[]) => void) {
+    if (!(event in this.listeners)) {
       this.listeners[event] = [];
     }
 
@@ -80,7 +80,7 @@ export default class EventEmitter {
   }
 
   emit(event: string, ...data: any): any {
-    if (!this.listeners.hasOwnProperty(event)) {
+    if (!(event in this.listeners)) {
       return null;
     }
 

@@ -41,6 +41,12 @@ export async function getBytes(
       }),
     ]);
 
+    if (!result.value) {
+      // empty chunk, skip it
+      console.warn('Empty chunk received from server');
+      continue;
+    }
+
     try {
       onChunk(result.value);
     } catch (err) {
@@ -102,9 +108,9 @@ export function getLines(
               fieldLength = position - lineStart;
             }
             break;
-          // @ts-ignore:7029 \r case below should fallthrough to \n:
           case ControlChars.CarriageReturn:
             discardTrailingNewline = true;
+          // eslint-disable-next-line no-fallthrough
           case ControlChars.NewLine:
             lineEnd = position;
             break;
@@ -180,6 +186,7 @@ export function getMessages(
           onId?.((message.id = value));
           break;
         case 'retry':
+          // eslint-disable-next-line no-case-declarations
           const retry = parseInt(value, 10);
           if (!isNaN(retry)) {
             // per spec, ignore non-integers

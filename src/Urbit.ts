@@ -1,33 +1,32 @@
+import { formatUw, parseUw, patp2dec } from '@urbit/aura';
+import { Atom, Cell, Noun, cue, dejs, enjs, jam } from '@urbit/nockjs';
 import { isBrowser } from 'browser-or-node';
+
 import { UrbitHttpApiEvent, UrbitHttpApiEventType } from './events';
-import { fetchEventSource, EventSourceMessage } from './fetch-event-source';
-
+import { EventSourceMessage, fetchEventSource } from './fetch-event-source';
 import {
-  Scry,
-  Thread,
-  NounThread,
-  JsonThread,
-  Poke,
-  Subscription,
-  headers,
-  FatalError,
-  Path,
-  ReapError,
-  UrbitParams,
-  OnceSubscriptionErr,
-  Patp,
-  GallAgent,
-  Mark,
   EyreEvent,
+  FatalError,
+  GallAgent,
+  JsonThread,
+  Mark,
+  NounThread,
+  OnceSubscriptionErr,
+  Path,
+  Patp,
+  Poke,
+  ReapError,
+  Scry,
+  Subscription,
+  Thread,
+  UrbitParams,
+  headers,
 } from './types';
-import EventEmitter, { hexString, unpackJamBytes, packJamBytes } from './utils';
-
-import { Noun, Atom, Cell, enjs, dejs, jam, cue } from '@urbit/nockjs';
-import { parseUw, formatUw, patp2dec } from '@urbit/aura';
+import EventEmitter, { hexString, packJamBytes, unpackJamBytes } from './utils';
 
 //TODO  move into nockjs utils
 function isNoun(a: any): a is Noun {
-  return (a instanceof Atom) || (a instanceof Cell);
+  return a instanceof Atom || a instanceof Cell;
 }
 
 /**
@@ -83,8 +82,7 @@ export class Urbit {
    * subscription is available, which may be 0, 1, or many times. The
    * disconnect function may be called exactly once.
    */
-  private outstandingSubscriptions: Map<number, Subscription> =
-    new Map();
+  private outstandingSubscriptions: Map<number, Subscription> = new Map();
 
   /**
    * Our abort controller, used to close the connection
@@ -139,30 +137,36 @@ export class Urbit {
    *
    * @param reconnect - true if this is a reconnection
    */
-  onOpen?: (reconnect: boolean) => void = null;
+  onOpen?: (reconnect: boolean) => void = undefined;
   /**
    * Called on every attempt to reconnect to the ship. Followed by onOpen
    * or onError depending on whether the connection succeeds.
    */
-  onRetry?: () => void = null;
+  onRetry?: () => void = undefined;
   /**
    * Called when the connection fails irrecoverably
    */
-  onError?: (error: any) => void = null;
+  onError?: (error: any) => void = undefined;
 
   /** This is basic interpolation to get the channel URL of an instantiated Urbit connection. */
   private get channelUrl(): string {
     return `${this.url}/~/channel/${this.uid}`;
   }
 
-  private fetchOptions(method: 'PUT' | 'GET' = 'PUT',
-                       mode: 'noun' | 'json' = 'noun'): any {
+  private fetchOptions(
+    method: 'PUT' | 'GET' = 'PUT',
+    mode: 'noun' | 'json' = 'noun'
+  ): any {
     let type;
     switch (mode) {
-      case 'noun': type = 'application/x-urb-jam'; break;
-      case 'json': type = 'application/json';      break;
+      case 'noun':
+        type = 'application/x-urb-jam';
+        break;
+      case 'json':
+        type = 'application/json';
+        break;
     }
-    let headers: headers = {};
+    const headers: headers = {};
     switch (method) {
       case 'PUT':
         headers['Content-Type'] = type;
@@ -215,7 +219,7 @@ export class Urbit {
       ...params,
     });
 
-    airlock.ready = new Promise(async (resolve) => {
+    airlock.ready = (async () => {
       // Learn where we are aka what ship we're connecting to
       await airlock.getShipName();
 
@@ -226,9 +230,8 @@ export class Urbit {
       await airlock.getOurName();
 
       await airlock.connect();
-
-      resolve();
-    });
+      return;
+    })();
 
     return airlock;
   }
@@ -320,10 +323,10 @@ export class Urbit {
       }
       const cookie = response.headers.get('set-cookie');
       if (!this.ship && cookie) {
-        this.ship = new RegExp(/urbauth-~([\w-]+)/).exec(cookie)[1];
+        this.ship = new RegExp(/urbauth-~([\w-]+)/).exec(cookie)?.[1];
       }
       if (!isBrowser) {
-        this.cookie = cookie;
+        this.cookie = cookie ?? undefined;
       }
     });
   }
@@ -388,24 +391,25 @@ export class Urbit {
             this.ack(eventId);
           }
 
-          const eev: EyreEvent = this.unpackSSEvent(event.data);
+          const eev: EyreEvent | null = this.unpackSSEvent(event.data);
 
-          if (
-            eev.tag === 'poke-ack' &&
-            this.outstandingPokes.has(eev.id)
-          ) {
+          if (!eev) {
+            return;
+          }
+
+          if (eev.tag === 'poke-ack' && this.outstandingPokes.has(eev.id)) {
             const funcs = this.outstandingPokes.get(eev.id);
             if (!eev.err) {
-              funcs.onSuccess();
+              funcs?.onSuccess?.();
             } else {
               //TODO  pre-render tang after porting tang utils,
               //      because json also has its tang pre-rendered into string
               console.error(eev.err);
-              // @ts-ignore because function type signature shenanigans
-              funcs.onError?.(eev.err);
+              // @ts-expect-error because function type signature shenanigans
+              funcs?.onError?.(eev.err);
             }
             this.outstandingPokes.delete(eev.id);
-          //
+            //
           } else if (
             eev.tag === 'watch-ack' &&
             this.outstandingSubscriptions.has(eev.id)
@@ -415,31 +419,31 @@ export class Urbit {
               //TODO  pre-render tang after porting tang utils,
               //      because json also has its tang pre-rendered into string
               console.error(eev.err);
-              // @ts-ignore because function type signature shenanigans
-              funcs.onNack?.(eev.err);
+              // @ts-expect-error because function type signature shenanigans
+              funcs?.onNack?.(eev.err);
               this.outstandingSubscriptions.delete(eev.id);
             }
-          //
+            //
           } else if (
             eev.tag === 'fact' &&
             this.outstandingSubscriptions.has(eev.id)
           ) {
-            const funcs: Subscription = this.outstandingSubscriptions.get(eev.id);
+            const funcs = this.outstandingSubscriptions.get(eev.id);
             try {
-              if (funcs.onFact) {
+              if (funcs?.onFact) {
                 //NOTE  we don't pass the desk. it's a leak-y eyre impl detail
                 funcs.onFact?.(eev.mark, eev.data);
               }
             } catch (e) {
               console.error('Failed to call subscription event callback', e);
             }
-          //
+            //
           } else if (
             eev.tag === 'kick' &&
             this.outstandingSubscriptions.has(eev.id)
           ) {
             const funcs = this.outstandingSubscriptions.get(eev.id);
-            funcs.onKick();
+            funcs?.onKick?.();
             this.outstandingSubscriptions.delete(eev.id);
             this.emit('subscription', {
               id: eev.id,
@@ -505,7 +509,7 @@ export class Urbit {
     this.lastHeardEventId = -1;
     this.lastAcknowledgedEventId = -1;
     this.outstandingSubscriptions.forEach((sub, id) => {
-      sub.onKick();
+      sub.onKick?.();
       this.emit('subscription', {
         id,
         status: 'close',
@@ -515,10 +519,10 @@ export class Urbit {
 
     this.outstandingPokes.forEach((poke, id) => {
       if (this.mode === 'noun') {
-        // @ts-ignore because function type signature shenanigans
+        // @ts-expect-error because function type signature shenanigans
         poke.onError(dwim(Atom.fromString('Channel was reaped'), 0));
       } else {
-        // @ts-ignore because function type signature shenanigans
+        // @ts-expect-error because function type signature shenanigans
         poke.onError('Channel was reaped');
       }
     });
@@ -571,7 +575,7 @@ export class Urbit {
     }
   }
 
-  private unpackSSEvent(eventString: string): EyreEvent {
+  private unpackSSEvent(eventString: string): EyreEvent | null {
     if (this.mode === 'noun') {
       const data: Noun = cue(new Atom(parseUw(eventString)));
       // [request-id channel-event]
@@ -592,14 +596,14 @@ export class Urbit {
           } else {
             return { tag: 'poke-ack', id: id, err: bod.tail };
           }
-        // [%watch-ack p=(unit tang)]
+          // [%watch-ack p=(unit tang)]
         } else if (tag === 'watch-ack') {
           if (bod instanceof Atom) {
             return { tag: 'watch-ack', id: id };
           } else {
             return { tag: 'watch-ack', id: id, err: bod.tail };
           }
-        // [%fact =desk =mark =noun]
+          // [%fact =desk =mark =noun]
         } else if (tag === 'fact') {
           if (
             !(
@@ -613,7 +617,7 @@ export class Urbit {
           const mark = Atom.cordToString(bod.tail.head);
           //NOTE  we don't extract the desk. it's a leak-y eyre impl detail
           return { tag: 'fact', id: id, mark: mark, data: bod.tail.tail };
-        // [%kick ~]
+          // [%kick ~]
         } else if (tag === 'kick') {
           return { tag: 'kick', id: id };
         } else if (this.verbose) {
@@ -622,7 +626,7 @@ export class Urbit {
       } else {
         console.log('strange event noun', data.toString());
       }
-    //
+      //
     } else if (this.mode === 'json') {
       const data: any = JSON.parse(eventString);
       switch (data.response) {
@@ -637,10 +641,12 @@ export class Urbit {
         default:
           throw new Error('strange event json ' + eventString);
       }
-    //
+      //
     } else {
       throw new Error('strange mode ' + this.mode);
     }
+
+    return null;
   }
 
   /**
@@ -652,10 +658,13 @@ export class Urbit {
    *
    * @returns The first fact on the subcription
    */
-  async subscribeOnce(app: GallAgent, path: Path, timeout?: number):
-  Promise<Noun | OnceSubscriptionErr> {
+  async subscribeOnce(
+    app: GallAgent,
+    path: Path,
+    timeout?: number
+  ): Promise<Noun | OnceSubscriptionErr> {
     await this.ready;
-    return new Promise(async (resolve, reject) => {
+    return new Promise((resolve, reject) => {
       let done = false;
       let id: number | null = null;
       const onKick = () => {
@@ -664,27 +673,29 @@ export class Urbit {
         }
       };
       const onFact = (m: Mark, n: Noun) => {
-        if (!done) {
+        if (!done && id) {
           resolve(n);
           this.unsubscribe(id);
         }
       };
       const onNack = (n: Noun) => {
         reject('onNack');
-      }
+      };
       const request = { app, path, onFact, onNack, onKick };
 
-      id = await this.subscribe(request);
+      this.subscribe(request).then((subId) => {
+        id = subId;
 
-      if (timeout) {
-        setTimeout(() => {
-          if (!done) {
-            done = true;
-            reject('timeout');
-            this.unsubscribe(id);
-          }
-        }, timeout);
-      }
+        if (timeout) {
+          setTimeout(() => {
+            if (!done && id) {
+              done = true;
+              reject('timeout');
+              this.unsubscribe(id);
+            }
+          }, timeout);
+        }
+      });
     });
   }
 
@@ -697,8 +708,8 @@ export class Urbit {
    */
   async poke(params: Poke): Promise<number> {
     await this.ready;
-    params.onSuccess = params.onSuccess || (()=>{});
-    params.onError   = params.onError   || (()=>{});
+    params.onSuccess = params.onSuccess || (() => {});
+    params.onError = params.onError || (() => {});
     const { app, mark, data, ship } = {
       ship: this.ship,
       ...params,
@@ -712,13 +723,18 @@ export class Urbit {
     this.outstandingPokes.set(eventId, params);
 
     if (isNoun(data)) {
-      const shipAtom = Atom.fromString(patp2dec(ship), 10);
+      const shipAtom = Atom.fromString(patp2dec(ship as string), 10);
       // [%poke request-id=@ud ship=@p app=term mark=@tas =noun]
       const non = ['poke', eventId, shipAtom, app, mark, data];
       await this.sendNounsToChannel(non);
     } else {
       const poke = {
-        id: eventId, action: 'poke', ship, app, mark, data,
+        id: eventId,
+        action: 'poke',
+        ship,
+        app,
+        mark,
+        data,
       };
       await this.sendJsonsToChannel(poke);
     }
@@ -747,7 +763,7 @@ export class Urbit {
     }
 
     const eventId = this.getEventId();
-    // @ts-ignore because function type signature shenanigans
+    // @ts-expect-error because function type signature shenanigans
     this.outstandingSubscriptions.set(eventId, {
       app,
       path,
@@ -756,17 +772,15 @@ export class Urbit {
       onKick,
     });
 
-    let pathAsString: string;
-    let pathAsNoun: Noun;
+    let pathAsString: string = '';
+    let pathAsNoun: Noun = Atom.zero;
     if (typeof path === 'string') {
       pathAsString = path;
       pathAsNoun = dejs.list(path.split('/'));
-    } else
-    if (Array.isArray(path)) {
+    } else if (Array.isArray(path)) {
       pathAsString = path.join('/');
       pathAsNoun = dejs.list(path);
-    } else
-    if (path instanceof Atom || path instanceof Cell) {
+    } else if (path instanceof Atom || path instanceof Cell) {
       pathAsString = enjs.array(enjs.cord)(path).join('/');
       pathAsNoun = path;
     }
@@ -782,7 +796,7 @@ export class Urbit {
     const non = [
       'subscribe',
       eventId,
-      Atom.fromString(patp2dec(ship), 10),
+      Atom.fromString(patp2dec(ship as string), 10),
       app,
       pathAsNoun,
     ];
@@ -854,14 +868,12 @@ export class Urbit {
     await this.ready;
     const { app, path, mark } = params;
 
-    let pathAsString: string;
+    let pathAsString: string = '';
     if (typeof path === 'string') {
       pathAsString = path;
-    } else
-    if (Array.isArray(path)) {
+    } else if (Array.isArray(path)) {
       pathAsString = path.join('/');
-    } else
-    if (path instanceof Atom || path instanceof Cell) {
+    } else if (path instanceof Atom || path instanceof Cell) {
       pathAsString = enjs.array(enjs.cord)(path).join('/');
     }
 
@@ -870,7 +882,7 @@ export class Urbit {
       this.fetchOptions('GET')
     );
 
-    if (!response.ok) {
+    if (!response.ok || !response.body) {
       return Promise.reject(response);
     }
 
@@ -890,9 +902,11 @@ export class Urbit {
     return new Response(response as ReadableStream).json();
   }
 
-  private async callThread(params: Thread,
-               body: BodyInit,
-               mode: 'noun' | 'json' = 'noun'): Promise<Response> {
+  private async callThread(
+    params: Thread,
+    body: BodyInit,
+    mode: 'noun' | 'json' = 'noun'
+  ): Promise<Response> {
     await this.ready;
     const { inputMark, outputMark, threadName, desk } = params;
     if (!desk) {
@@ -904,7 +918,7 @@ export class Urbit {
       {
         ...this.fetchOptions('PUT', mode),
         method: 'POST',
-        body: body
+        body: body,
       }
     );
   }

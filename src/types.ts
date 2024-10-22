@@ -224,17 +224,18 @@ export type OnceSubscriptionErr = 'onKick' | 'onNack' | 'timeout';
 
 export interface headers {
   Cookie?: string;
-  [headerName: string]: string;
+  [headerName: string]: string | undefined;
 }
 
 export class FatalError extends Error {}
 
 export class ReapError extends Error {}
 
-export type EyreEvent = EyreEventPokeAck
-                      | EyreEventWatchAck
-                      | EyreEventKick
-                      | EyreEventFact;
+export type EyreEvent =
+  | EyreEventPokeAck
+  | EyreEventWatchAck
+  | EyreEventKick
+  | EyreEventFact;
 
 type EyreEventPokeAck = {
   tag: 'poke-ack';
@@ -245,14 +246,14 @@ type EyreEventWatchAck = {
   tag: 'watch-ack';
   id: number;
   err?: Noun | string;
-}
+};
 type EyreEventKick = {
   tag: 'kick';
   id: number;
-}
+};
 type EyreEventFact = {
   tag: 'fact';
   id: number;
   mark: Mark;
   data: Noun | any;
-}
+};
