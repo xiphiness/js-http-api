@@ -231,6 +231,8 @@ export class FatalError extends Error {}
 
 export class ReapError extends Error {}
 
+export class AuthError extends Error {}
+
 export type EyreEvent =
   | EyreEventPokeAck
   | EyreEventWatchAck

@@ -220,17 +220,21 @@ export class Urbit {
     });
 
     airlock.ready = (async () => {
-      // Learn where we are aka what ship we're connecting to
-      await airlock.getShipName();
+      try {
+        // Learn where we are aka what ship we're connecting to
+        await airlock.getShipName();
 
-      if (code) {
-        await airlock.authenticate();
+        if (code) {
+          await airlock.authenticate();
+        }
+        // Learn who we are aka what patp
+        await airlock.getOurName();
+
+        await airlock.connect();
+        return;
+      } catch (e) {
+        throw new Error('Failed to setup channel: ' + e);
       }
-      // Learn who we are aka what patp
-      await airlock.getOurName();
-
-      await airlock.connect();
-      return;
     })();
 
     return airlock;
@@ -341,11 +345,15 @@ export class Urbit {
     this.emit('status-update', { status: 'opening' });
     // Can't receive events until the channel is open,
     // so send an empty list of commands to open it.
-    await this.sendNounsToChannel();
     this.sseClientInitialized = true;
+    if (this.mode === 'noun') {
+      await this.sendNounsToChannel();
+    } else {
+      await this.sendJsonsToChannel();
+    }
     return new Promise((resolve, reject) => {
       fetchEventSource(this.channelUrl, {
-        ...this.fetchOptions('GET'),
+        ...this.fetchOptions('GET', this.mode),
         fetch: this.fetch,
         openWhenHidden: true,
         responseTimeout: 25000,
@@ -552,12 +560,15 @@ export class Urbit {
   //NOTE  every arg is interpreted (through nockjs.dwim) as a noun, which
   //      should result in a noun nesting inside of the xx $eyre-command type
   private async sendNounsToChannel(...args: (Noun | any)[]): Promise<void> {
+    const options = this.fetchOptions('PUT', 'noun');
+    const body = formatUw(jam(dejs.list(args)).number.toString());
     const response = await this.fetch(this.channelUrl, {
-      ...this.fetchOptions('PUT', 'noun'),
+      ...options,
       method: 'PUT',
-      body: formatUw(jam(dejs.list(args)).number.toString()),
+      body,
     });
     if (!response.ok) {
+      console.log(response.status, response.statusText, await response.text());
       throw new Error('Failed to PUT channel command(s)');
     }
   }
@@ -565,12 +576,15 @@ export class Urbit {
   //NOTE  every arg should be an eyre command object
   //TODO  make a type for that
   private async sendJsonsToChannel(...args: any[]): Promise<void> {
+    const options = this.fetchOptions('PUT', 'json');
+    const body = JSON.stringify(args);
     const response = await this.fetch(this.channelUrl, {
-      ...this.fetchOptions('PUT', 'json'),
+      ...options,
       method: 'PUT',
-      body: JSON.stringify(args),
+      body,
     });
     if (!response.ok) {
+      console.log(response.status, response.statusText, await response.text());
       throw new Error('Failed to PUT channel command(s)');
     }
   }
@@ -658,11 +672,11 @@ export class Urbit {
    *
    * @returns The first fact on the subcription
    */
-  async subscribeOnce(
+  async subscribeOnce<T>(
     app: GallAgent,
     path: Path,
     timeout?: number
-  ): Promise<Noun | OnceSubscriptionErr> {
+  ): Promise<T> {
     await this.ready;
     return new Promise((resolve, reject) => {
       let done = false;
@@ -672,13 +686,13 @@ export class Urbit {
           reject('onKick');
         }
       };
-      const onFact = (m: Mark, n: Noun) => {
+      const onFact = (m: Mark, n: any) => {
         if (!done && id) {
           resolve(n);
           this.unsubscribe(id);
         }
       };
-      const onNack = (n: Noun) => {
+      const onNack = (n: Noun | 'string') => {
         reject('onNack');
       };
       const request = { app, path, onFact, onNack, onKick };
@@ -711,18 +725,14 @@ export class Urbit {
     params.onSuccess = params.onSuccess || (() => {});
     params.onError = params.onError || (() => {});
     const { app, mark, data, ship } = {
-      ship: this.ship,
+      ship: this.ship?.replace('~', '') || '',
       ...params,
     };
-
-    if (this.lastEventId === 0) {
-      this.emit('status-update', { status: 'opening' });
-    }
 
     const eventId = this.getEventId();
     this.outstandingPokes.set(eventId, params);
 
-    if (isNoun(data)) {
+    if (isNoun(data) && this.mode === 'noun') {
       const shipAtom = Atom.fromString(patp2dec(ship as string), 10);
       // [%poke request-id=@ud ship=@p app=term mark=@tas =noun]
       const non = ['poke', eventId, shipAtom, app, mark, data];
@@ -734,7 +744,7 @@ export class Urbit {
         ship,
         app,
         mark,
-        data,
+        json: data,
       };
       await this.sendJsonsToChannel(poke);
     }
@@ -754,13 +764,9 @@ export class Urbit {
       onNack: () => {},
       onFact: () => {},
       onKick: () => {},
-      ship: this.ship,
+      ship: this.ship?.replace('~', '') || '',
       ...params,
     };
-
-    if (this.lastEventId === 0) {
-      this.emit('status-update', { status: 'opening' });
-    }
 
     const eventId = this.getEventId();
     // @ts-expect-error because function type signature shenanigans
@@ -792,15 +798,26 @@ export class Urbit {
       status: 'open',
     });
 
-    // [%subscribe request-id=@ud ship=@p app=term =path]
-    const non = [
-      'subscribe',
-      eventId,
-      Atom.fromString(patp2dec(ship as string), 10),
-      app,
-      pathAsNoun,
-    ];
-    await this.sendNounsToChannel(non);
+    if (this.mode === 'noun') {
+      // [%subscribe request-id=@ud ship=@p app=term =path]
+      const non = [
+        'subscribe',
+        eventId,
+        Atom.fromString(patp2dec(ship as string), 10),
+        app,
+        pathAsNoun,
+      ];
+      await this.sendNounsToChannel(non);
+    } else {
+      const sub = {
+        id: eventId,
+        action: 'subscribe',
+        ship,
+        app,
+        path: pathAsString,
+      };
+      await this.sendJsonsToChannel(sub);
+    }
 
     return eventId;
   }
@@ -887,19 +904,18 @@ export class Urbit {
     }
 
     if ((mark || 'noun') !== 'noun') {
-      return response.body;
+      return response.json();
     }
 
     return unpackJamBytes(await response.arrayBuffer());
   }
 
-  async scryForJson(params: Scry): Promise<any> {
-    if (params.mark !== 'json') {
+  async scryForJson<T>(params: Scry): Promise<T> {
+    if (params.mark !== 'json' && this.verbose) {
       console.log('scryForJson forcing %json mark');
     }
     params.mark = 'json';
-    const response = await this.scry(params);
-    return new Response(response as ReadableStream).json();
+    return (await this.scry(params)) as T;
   }
 
   private async callThread(
